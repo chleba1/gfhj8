@@ -14,19 +14,26 @@ Each artifact here traces to a numbered finding in
 
 ## Install
 
+Download the three artifacts, then run this from **anywhere** — it finds them in Downloads
+or Desktop, creates the target folders, copies, and verifies what actually landed:
+
 ```powershell
-# 1. Scripts
-copy drift-check.ps1       C:\Users\Easy\Desktop\AI-Brain\scripts\
-copy quarantine-fetch.ps1  C:\Users\Easy\Desktop\AI-Brain\scripts\
+powershell -NoProfile -File <path-to>\install.ps1 -WhatIfOnly   # see the plan
+powershell -NoProfile -File <path-to>\install.ps1               # do it
+```
 
-# 2. Skill
-xcopy /E /I spec-ramp C:\Users\Easy\.claude\skills\spec-ramp
+If a file is missing it aborts and names it — nothing is half-installed.
 
-# 3. Dry-run both before trusting either (rule 15a)
-powershell -NoProfile -File C:\Users\Easy\Desktop\AI-Brain\scripts\drift-check.ps1 `
-  -Repo C:\Users\Easy\Desktop\MMOCore -WhatIfOnly
-powershell -NoProfile -File C:\Users\Easy\Desktop\AI-Brain\scripts\quarantine-fetch.ps1 `
-  -FromFile <any text file> -SourceUrl https://example.com -WhatIfOnly
+Note: `spec-ramp` downloads as a loose `SKILL.md`, not a folder. The installer places it at
+`~\.claude\skills\spec-ramp\SKILL.md`, which is where the skill loader expects it. A plain
+`xcopy spec-ramp ...` will not work, because there is no such folder on disk.
+
+Then dry-run both scripts before trusting either (rule 15a):
+
+```powershell
+$s = "C:\Users\Easy\Desktop\AI-Brain\scripts"
+powershell -NoProfile -File "$s\drift-check.ps1" -Repo C:\Users\Easy\Desktop\MMOCore -WhatIfOnly
+powershell -NoProfile -File "$s\quarantine-fetch.ps1" -FromFile <any text file> -SourceUrl https://example.com -WhatIfOnly
 ```
 
 ## New CLAUDE.md rule to add
