@@ -13,6 +13,11 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
 
+  <!-- Golden snapshot sits next to the test binary; regenerate with MMOCORE_REGEN=1. -->
+  <ItemGroup>
+    <None Update="golden-tick-state.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- GameServer is OutputType=Exe; referencing it from a test project is supported. -->
   <ItemGroup>
     <ProjectReference Include="..\..\GameServer\GameServer.csproj" />

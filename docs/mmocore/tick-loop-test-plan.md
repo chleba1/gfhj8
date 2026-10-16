@@ -123,3 +123,83 @@ Pop-Location; $t=($o|Out-String); $t|Set-Clipboard; "OK ($($t.Length) chars)"
 
 With those four, the golden-hash test can be written against real signatures and verified
 the same way these were.
+
+---
+
+## UPDATE — tick-loop tests shipped (`TickLoopTests.cs`)
+
+All three blockers resolved from the second dump:
+
+| Blocker | Resolution |
+|---|---|
+| No test project referencing GameServer | `GameServer.Tests.csproj` (shipped earlier) |
+| `SimulateTick` is private | Reflection harness; every member resolved once, throws **by name** if missing |
+| Headless `Server` construction unknown | `new Server()` takes no args and binds nothing — `_tcpListener`/`_udpClient` stay null until `RunAsync()` |
+
+The socket question is settled by `SendPerClientSnapshots`: it does
+`if (viewer.UdpEndPoint == null) continue;` **before** touching `_udpClient!`. Test sessions
+leave `UdpEndPoint` null, so no send is ever reached. `PlayerSession` gets an unconnected
+`new TcpClient()` — never dialled, nothing opened.
+
+`TickLoopAsync`'s body is mirrored in `ServerTickHarness.Tick` in the same order
+(`SimulateTick` → `RebuildSpatialGrids` → `TickAreaEffects` → `TickStatusEffects` →
+`TickProjectiles`). `SendPerClientSnapshots` is deliberately excluded — no sim-state change
+worth hashing, and it would dereference `_udpClient` if a test ever set `UdpEndPoint`.
+
+### Tests
+
+| Test | Locks |
+|---|---|
+| `Harness_ResolvesEveryTickMethod` | a rename can't leave the suite silently testing nothing |
+| `Server_ConstructsHeadlessly_WithoutBindingListeners` | headless testability itself |
+| `IdenticalInputs_ProduceIdenticalStateHash` | determinism — unseeded RNG, lost mutations |
+| `Simulation_AdvancesOnTickCount_NotWallClock` | fixed timestep; same state with real delays injected |
+| `ExaggeratedInputVector_DoesNotOutrunAUnitVector` | the anti-cheat speed clamp |
+| `GoldenTickState_MatchesCommittedSnapshot` | behaviour lock, `MMOCORE_REGEN=1` convention |
+
+`StateHash` sorts sessions by `PlayerId` before hashing, deliberately: `_sessions` is a
+`ConcurrentDictionary` with no guaranteed enumeration order, and hashing in traversal order
+would flake on something that isn't the sim's behaviour. The ordering risk is real but lives
+upstream (finding 3), not in this test.
+
+### Verification
+
+Mechanics verified against a structural stub mirroring the real shapes (private tick methods,
+`ConcurrentDictionary _sessions`, `PlayerSession(int, string, ulong, TcpClient)`), then
+**mutation-tested** — passing tests prove nothing about detection:
+
+| Mutant injected into the stub sim | Result |
+|---|---|
+| Unseeded `Random.Shared` in movement | 4 tests fail |
+| Speed clamp removed | `ExaggeratedInputVector` fails |
+| `DateTime.UtcNow` leaked into position | 3 tests fail |
+| `TickProjectiles` renamed | 5 tests fail, named explicitly |
+
+All four killed; clean stub back to 6/6.
+
+### Not verified, and what to do about it
+
+These were **not compiled against the real GameServer assembly** — that needs `GameWorld`,
+`NetworkConfig`, `Inventory`, `TerrainHeight`, `ClassCatalog` and the rest of the tree, which
+isn't available here. Compile risk is deliberately minimised: the file references only
+`Server` and `PlayerSession` by type, everything else through reflection.
+
+First run:
+
+```powershell
+dotnet test Tests\GameServer.Tests                       # expect: golden-missing failure only
+$env:MMOCORE_REGEN=1; dotnet test --filter GoldenTickState
+Remove-Item Env:\MMOCORE_REGEN
+copy Tests\GameServer.Tests\bin\Debug\net8.0\golden-tick-state.txt Tests\GameServer.Tests\
+dotnet test Tests\GameServer.Tests                       # expect: 6/6
+```
+
+Two things to watch on that first real run, both plausible and neither fatal:
+
+1. **`IdenticalInputs_ProduceIdenticalStateHash` fails immediately.** That is a *finding*, not
+   a broken test — it means real nondeterminism exists in the sim today. Most likely source:
+   `SimulateMobs` / `RespawnNodes` / `MobRetargetMinMs..MaxMs` randomised wander. If so, the
+   mob RNG needs seeding before the golden hash is meaningful.
+2. **A reflected method is missing** — the failure names it; update the harness.
+
+Report either back rather than deleting the test.
