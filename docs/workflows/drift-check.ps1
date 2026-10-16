@@ -25,6 +25,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Numbers MUST be written invariant. PowerShell's [double] cast is always invariant, but
+# Format-List/Export-Csv render with the CURRENT culture - so on a sk-SK/cs-CZ machine a
+# value renders as "1,03", the cast then reads the comma as a GROUP separator and returns
+# 103, and the trend prints "DOWN -101.97" for an unchanged value. It also puts a comma
+# inside a comma-separated file.
+$Inv = [System.Globalization.CultureInfo]::InvariantCulture
+function N2([double]$v) { [math]::Round($v,2).ToString($Inv) }
+function N1([double]$v) { [math]::Round($v,1).ToString($Inv) }
+
 if (-not (Test-Path (Join-Path $Repo '.git'))) { Write-Host "ABORT: no .git under $Repo" -ForegroundColor Red; exit 1 }
 
 # powershell -File binds "-Ext .cs,.json" as ONE string, not an array. Without this split the
@@ -53,17 +63,17 @@ try {
 
   # Churn proxy: deletions as a share of additions. Rewriting your own recent work
   # shows up here before it shows up anywhere else.
-  $churn = if ($added -gt 0) { [math]::Round(100.0 * $deleted / $added, 1) } else { 0 }
+  $churn = if ($added -gt 0) { N1 (100.0 * $deleted / $added) } else { '0' }
 
   # Rework proxy: share of touched files edited in 3+ separate commits in the window.
   $reworked = @($touched.GetEnumerator() | Where-Object { $_.Value -ge 3 }).Count
-  $reworkPct = if ($touched.Count -gt 0) { [math]::Round(100.0 * $reworked / $touched.Count, 1) } else { 0 }
+  $reworkPct = if ($touched.Count -gt 0) { N1 (100.0 * $reworked / $touched.Count) } else { '0' }
 
   # Refactor ratio: renames/moves as a share of file-changes. GitClear's headline
   # drop was in "moved" code - refactoring stops when generating is cheaper.
   $renames = @(git log --since=$since --diff-filter=R --format='' --name-only 2>$null | Where-Object { $_ }).Count
   $fileChanges = ($touched.Values | Measure-Object -Sum).Sum
-  $refactorPct = if ($fileChanges -gt 0) { [math]::Round(100.0 * $renames / $fileChanges, 1) } else { 0 }
+  $refactorPct = if ($fileChanges -gt 0) { N1 (100.0 * $renames / $fileChanges) } else { '0' }
 
   # ---- working-tree scans ---------------------------------------------
   $files = Get-ChildItem -Recurse -File -EA 0 |
@@ -94,7 +104,7 @@ try {
       else { $seen[$key] = 1 }
     }
   }
-  $dupPct = if ($totalBlocks -gt 0) { [math]::Round(100.0 * $dupBlocks / $totalBlocks, 2) } else { 0 }
+  $dupPct = if ($totalBlocks -gt 0) { N2 (100.0 * $dupBlocks / $totalBlocks) } else { '0' }
 
   # Rule 15b: a scan that matched nothing is NOT a measurement of zero drift.
   if ($files.Count -eq 0) {
@@ -119,6 +129,13 @@ try {
 
   $row | Format-List | Out-String | Write-Host
 
+  if ($commits -eq 0) {
+    Write-Host "NOTE: 0 commits in the last $Days days." -ForegroundColor Yellow
+    Write-Host "      churnPct / reworkPct / refactorPct / linesAdded / linesDeleted measured NOTHING." -ForegroundColor Yellow
+    Write-Host "      That is an empty window, not clean code. Re-run with -Days 90 for a real git read." -ForegroundColor Yellow
+    Write-Host "      dupBlockPct, dupBlocks, errorMasking and filesScanned ARE real - they scan the working tree." -ForegroundColor Yellow
+  }
+
   if ($WhatIfOnly) { Write-Host "(dry run - nothing written)"; exit 0 }
 
   $dir = Split-Path $LogPath -Parent
@@ -133,8 +150,8 @@ try {
     $prev = $hist[-2]
     Write-Host "`nvs previous run ($($prev.date)):"
     foreach ($m in 'churnPct','reworkPct','dupBlockPct','errorMasking') {
-      $d = [double]$row.$m - [double]$prev.$m
-      $arrow = if ($d -gt 0) { "UP  +$([math]::Round($d,2))" } elseif ($d -lt 0) { "DOWN $([math]::Round($d,2))" } else { "flat" }
+      $d = [double]::Parse([string]$row.$m, $Inv) - [double]::Parse([string]$prev.$m, $Inv)
+      $arrow = if ($d -gt 0) { "UP  +$(N2 $d)" } elseif ($d -lt 0) { "DOWN $(N2 $d)" } else { "flat" }
       Write-Host ("  {0,-13} {1,8} -> {2,-8} {3}" -f $m, $prev.$m, $row.$m, $arrow)
     }
   } else {
